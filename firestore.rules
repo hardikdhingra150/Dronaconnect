@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+
+    function getUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isLoggedIn() && getUser().role == "admin";
+    }
+
+    function isTeacher() {
+      return isLoggedIn() && getUser().role == "teacher";
+    }
+
+    function isOwner(userId) {
+      return isLoggedIn() && request.auth.uid == userId;
+    }
+
+    function isSubjectTeacher(subjectId) {
+      return get(/databases/$(database)/documents/subjects/$(subjectId)).data.teacherId == request.auth.uid;
+    }
+
+    // ─── Users Collection ─────────────────────────────────────
+    match /users/{userId} {
+      // Anyone logged in can read users
+      allow read: if isLoggedIn();
+
+      // ✅ User can create ONLY their own document (first time Google/email login)
+      allow create: if isOwner(userId);
+
+      // User can update their own profile, admin can update anyone
+      allow update: if isOwner(userId) || isAdmin();
+
+      // Only admin can delete
+      allow delete: if isAdmin();
+    }
+
+    // ─── Subjects Collection ──────────────────────────────────
+    match /subjects/{subjectId} {
+      allow read: if isLoggedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Attendance Collection ────────────────────────────────
+    match /attendance/{subjectId}/records/{date} {
+      allow read: if isLoggedIn();
+      allow create, update: if isAdmin() ||
+        (isTeacher() && isSubjectTeacher(subjectId));
+      allow delete: if isAdmin();
+    }
+
+    // ─── Block everything else ────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
