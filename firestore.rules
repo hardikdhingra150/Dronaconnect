@@ -2,6 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ─── Helper Functions ─────────────────────────────────────
     function isLoggedIn() {
       return request.auth != null;
     }
@@ -18,6 +19,14 @@ service cloud.firestore {
       return isLoggedIn() && getUser().role == "teacher";
     }
 
+    function isStudent() {
+      return isLoggedIn() && getUser().role == "student";
+    }
+
+    function isAdminOrTeacher() {
+      return isAdmin() || isTeacher();
+    }
+
     function isOwner(userId) {
       return isLoggedIn() && request.auth.uid == userId;
     }
@@ -26,33 +35,141 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/subjects/$(subjectId)).data.teacherId == request.auth.uid;
     }
 
-    // ─── Users Collection ─────────────────────────────────────
+    function isOwnRecord() {
+      return isLoggedIn() && request.resource.data.studentId == request.auth.uid;
+    }
+
+    // ─── Users ───────────────────────────────────────────────
     match /users/{userId} {
-      // Anyone logged in can read users
       allow read: if isLoggedIn();
-
-      // ✅ User can create ONLY their own document (first time Google/email login)
       allow create: if isOwner(userId);
-
-      // User can update their own profile, admin can update anyone
       allow update: if isOwner(userId) || isAdmin();
-
-      // Only admin can delete
       allow delete: if isAdmin();
     }
 
-    // ─── Subjects Collection ──────────────────────────────────
+    // ─── Subjects ────────────────────────────────────────────
     match /subjects/{subjectId} {
       allow read: if isLoggedIn();
       allow create, update, delete: if isAdmin();
     }
 
-    // ─── Attendance Collection ────────────────────────────────
+    // ─── Attendance ──────────────────────────────────────────
     match /attendance/{subjectId}/records/{date} {
       allow read: if isLoggedIn();
       allow create, update: if isAdmin() ||
         (isTeacher() && isSubjectTeacher(subjectId));
       allow delete: if isAdmin();
+    }
+
+    // ─── Fees ────────────────────────────────────────────────
+    match /fees/{feeId} {
+      // Student can only read their own fees
+      allow read: if isAdmin() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Admit Cards ─────────────────────────────────────────
+    match /admitCards/{cardId} {
+      allow read: if isAdmin() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Examination Results ─────────────────────────────────
+    match /results/{resultId} {
+      allow read: if isAdmin() || isTeacher() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Reappear Applications ───────────────────────────────
+    match /reappears/{reappearId} {
+      // Admin/teacher can read all; student reads their own
+      allow read: if isAdminOrTeacher() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      // Student can apply (create their own only)
+      allow create: if isLoggedIn() &&
+        request.resource.data.studentId == request.auth.uid;
+      // Only admin can approve/reject (update) or delete
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── Library Books ───────────────────────────────────────
+    match /library_books/{bookId} {
+      allow read: if isLoggedIn();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Library Issued ──────────────────────────────────────
+    match /library_issued/{issuedId} {
+      // Admin/teacher see all; student sees own
+      allow read: if isAdminOrTeacher() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      // Only admin can issue and return books
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── Conferences ─────────────────────────────────────────
+    match /conferences/{confId} {
+      allow read: if isLoggedIn();
+      // Admin and teachers can post conferences
+      allow create, update: if isAdminOrTeacher();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Research Papers ─────────────────────────────────────
+    match /research_papers/{paperId} {
+      allow read: if isLoggedIn();
+      // Anyone logged in can submit a paper
+      allow create: if isLoggedIn();
+      // Only the submitter or admin can update/delete
+      allow update, delete: if isAdmin() ||
+        (isLoggedIn() && resource.data.submittedBy == request.auth.uid);
+    }
+
+    // ─── Research Projects ───────────────────────────────────
+    match /research_projects/{projectId} {
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn();
+      allow update, delete: if isAdmin() ||
+        (isLoggedIn() && resource.data.submittedBy == request.auth.uid);
+    }
+
+    // ─── LMS Assignments ─────────────────────────────────────
+    match /assignments/{assignmentId} {
+      allow read: if isLoggedIn();
+      // Only teacher or admin can create/update/delete
+      allow create, update: if isAdminOrTeacher();
+      allow delete: if isAdmin() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+
+    // ─── LMS Submissions ─────────────────────────────────────
+    match /submissions/{submissionId} {
+      // Admin/teacher can read all; student reads own
+      allow read: if isAdminOrTeacher() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      // Student can submit (create own only)
+      allow create: if isLoggedIn() &&
+        request.resource.data.studentId == request.auth.uid;
+      // Student can re-submit (update own); teacher/admin can grade
+      allow update: if isAdminOrTeacher() ||
+        (isLoggedIn() && resource.data.studentId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ─── Notifications ───────────────────────────────────────
+    match /notifications/{userId}/items/{notifId} {
+      // User reads their own notifications; admin reads all
+      allow read: if isAdmin() || isOwner(userId);
+      // Admin can push notifications to anyone
+      allow create: if isAdmin();
+      // User can mark their own as read
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
     }
 
     // ─── Block everything else ────────────────────────────────
